@@ -1,23 +1,18 @@
- 1 — Verificar el disco
-lsblk
+1. Configuración de Red y Validación Inicial
+sudo systemctl restart NetworkManager
+ifconfig
 
- 2 — Formatear como ext4
-sudo mkfs.ext4 /dev/nvme0n2
+ping 172.29.114.120
 
-3 — Crear carpeta en el Escritorio y montar
-mkdir ~/Desktop/Midisco2
-sudo mount /dev/nvme0n2 ~/Desktop/Midisco2
-lsblk
+2. Habilitar SSH y Primera Conexión
+sudo systemctl start sshd
+sudo systemctl status sshd
 
-4 — Crear el archivo
-cd ~/Desktop/Midisco2
-sudo touch AdrianAlcantara.txt
-ls -la
+ssh redhat@172.29.114.120
 
- 5 — Desmontar y montar en /mnt
-cd ~
-sudo umount ~/Desktop/Midisco2
-sudo mount /dev/nvme0n2 /mnt
+3. Generación y Envío de Llaves desde Windows
+ssh-keygen -t rsa -b 4096
+type %USERPROFILE%\.ssh\id_rsa.pub | ssh redhat@172.29.114.120 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
 
-6 — Comprobar que el archivo sigue en /mnt
-ls -la /mnt
+4. Prueba Final
+ssh redhat@172.29.114.120

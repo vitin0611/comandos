@@ -1,34 +1,28 @@
-1. Actualización y mejora del sistema
-sudo dnf update -y && sudo dnf upgrade -y
-----------------------------------------------
-2. Limpiar terminal
-clear
-----------------------------------------------
-1. Actualización y mejora del sistema
-sudo dnf repolist
-sudo dnf repolist all
-----------------------------------------------
-5. Instalación del repositorio EPEL
-sudo dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm -y
-----------------------------------------------
-6. Instalación del monitor de sistema
-sudo dnf install btop -y
-----------------------------------------------
-7. Ejecución de la herramienta
-btop
-----------------------------------------------
-9. Desinstalación de herramienta
-sudo dnf remove btop -y
-----------------------------------------------
-10. Eliminación de archivos de configuración locales
-rm -rf ~/.config/btop
+=====================================================================
+PRACTICA RHEL 10: CONFIGURACION DE GRUB Y RECUPERACION DE CONTRASEÑA
+=====================================================================
+
+PARTE 1: CONFIGURACIÓN DEL TIEMPO DE ESPERA DE GRUB (20 SEGUNDOS)
+---------------------------------------------------------------------
+1. Editar el archivo de configuración por defecto de GRUB:
+   sudo nano /etc/default/grub
+   (Dentro del archivo, modificar o añadir: GRUB_TIMEOUT=20)
+
+2. Regenerar y aplicar la nueva configuración de GRUB:
+   sudo grub2-mkconfig -o /boot/grub2/grub.cfg
 
 
-Instalación del GPG check
+PARTE 2: RECUPERACIÓN DE CONTRASEÑA ROOT (SISTEMA EN SOLO LECTURA)
+---------------------------------------------------------------------
+1. Remontar la raíz en modo Lectura/Escritura (Solución al error 'Read-only file system'):
+   mount -o remount,rw /
 
-sudo dnf clean all
-sudo dnf makecache
-sudo dnf update
+2. Cambiar la contraseña del usuario administrador (root):
+   passwd root
 
-sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
-rpm -qa gpg-pubkey*
+3. Forzar el reetiquetado obligatorio de seguridad de SELinux:
+   touch /.autorelabel
+
+4. Reiniciar el sistema de forma segura para aplicar los cambios:
+   exec /sbin/init
+=====================================================================
