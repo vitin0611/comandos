@@ -1,0 +1,274 @@
+===============================================================================
+   GUÍA COMPLETA DE COMANDOS: INSTALACIÓN, REPARACIÓN Y CONFIGURACIÓN DE ISSABEL PBX
+===============================================================================
+
+Este documento agrupa la secuencia completa de comandos para la INSTALACIÓN INICIAL
+de Issabel PBX en un servidor Linux (AWS EC2 / CentOS 7), seguida de todas las
+acciones de REPARACIÓN de base de datos, credenciales AMI, módulos y permisos.
+
+
+===============================================================================
+FASE 1: INSTALACIÓN INICIAL DE ISSABEL PBX EN EL SERVIDOR (EC2 / CENTOS)
+===============================================================================
+
+-------------------------------------------------------------------------------
+1.1. ACCESO Y PREPARACIÓN DEL SISTEMA
+-------------------------------------------------------------------------------
+# Conectarse vía SSH (ejemplo en AWS EC2)
+# ssh -i tu_clave.pem centos@DIRECCION_IP_PUBLIC_EC2
+
+# Elevar privilegios a súper usuario (root)
+sudo su -
+
+# Establecer o cambiar la contraseña del usuario root
+passwd root
+
+# Actualizar todos los paquetes del sistema operativo
+yum update -y
+
+# Instalar herramientas esenciales y repositorios requeridos
+yum install -y wget net-tools epel-release vim
+
+
+-------------------------------------------------------------------------------
+1.2. DESCARGA E INSTALACIÓN DE ISSABEL PBX VIA SCRIPT NETINSTALL
+-------------------------------------------------------------------------------
+# Navegar al directorio de descargas
+cd /usr/src
+
+# Descargar el script oficial de instalación en red de Issabel 4
+wget -O issabel4-netinstall.sh httprepo.issabel.org/issabel4-netinstall.sh || wget https://sourceforge.net/projects/issabelpbx/files/Issabel%204/issabel-netinstall.sh -O issabel4-netinstall.sh
+
+# Asignar permisos de ejecución al script
+chmod +x issabel4-netinstall.sh
+
+# Iniciar el instalador interactivo de Issabel PBX
+./issabel4-netinstall.sh
+
+# NOTA DURANTE LA INSTALACIÓN:
+# 1. Seleccionar versión de Asterisk (se recomienda Asterisk 16 o 13 según preferencia).
+# 2. Seleccionar el motor SIP por defecto (Chan_SIP o PJSIP).
+# 3. Asignar la contraseña para el usuario 'root' de la base de datos MariaDB/MySQL (ejemplo: 'admin').
+# 4. Asignar la contraseña para el usuario 'admin' del panel web Issabel.
+
+
+-------------------------------------------------------------------------------
+1.3. REGION Y PUERTOS DE RED EN FIREWALL / GRUPO DE SEGURIDAD (AWS / CENTOS)
+-------------------------------------------------------------------------------
+# Abrir los siguientes puertos esenciales en el Grupo de Seguridad de AWS / Firewall:
+# - HTTP / HTTPS: 80, 443 TCP (Panel Web Issabel)
+# - SSH: 22 TCP (Administración por consola)
+# - SIP: 5060 TCP/UDP, 5061 TCP/UDP (Señalamiento SIP)
+# - RTP Media: 10000-20000 UDP (Audio de llamadas)
+# - Asterisk Manager (AMI): 5038 TCP (Comunicación interna PBX)
+
+# Si usas Firewalld en Linux:
+firewall-cmd --permanent --add-service=http --add-service=https
+firewall-cmd --permanent --add-port=5060/udp --add-port=5060/tcp
+firewall-cmd --permanent --add-port=10000-20000/udp
+firewall-cmd --reload
+
+
+===============================================================================
+FASE 2: REPARACIÓN DE LA BASE DE DATOS Y ESQUEMA MARIADB / MYSQL
+===============================================================================
+
+-------------------------------------------------------------------------------
+2.1. CREACIÓN DE DIRECTORIOS BASE Y AJUSTE DE COMPATIBILIDAD DE PHP
+-------------------------------------------------------------------------------
+# Crear directorios del sistema requeridos
+mkdir -p /var/run/asterisk /var/lib/asterisk/sounds/custom
+
+# Desactivar la versión antigua e incompatible de IonCube Loader en PHP 7.2
+sed -i '/ioncube_loader_lin_7.2/s/^/;/' /etc/php.ini /etc/php.d/*.ini 2>/dev/null || true
+
+
+-------------------------------------------------------------------------------
+2.2. CREACIÓN Y REPARACIÓN DE TABLAS DEL NÚCLEO EN MARIADB / MYSQL
+-------------------------------------------------------------------------------
+mysql -u root -p'admin' asterisk -e "
+-- Tabla de usuarios de administración del PBX
+CREATE TABLE IF NOT EXISTS ampusers (
+  username VARCHAR(20) NOT NULL DEFAULT '',
+  password_sha1 VARCHAR(40) NOT NULL DEFAULT '',
+  default_extension VARCHAR(45) NOT NULL DEFAULT 'none',
+  extension_high VARCHAR(45) NOT NULL DEFAULT '',
+  extension_low VARCHAR(45) NOT NULL DEFAULT '',
+  deptname VARCHAR(30) NOT NULL DEFAULT '',
+  sections TEXT,
+  PRIMARY KEY (username)
+);
+
+-- Registrar el usuario administrador con clave root
+INSERT IGNORE INTO ampusers (username, password_sha1, sections) VALUES ('admin', SHA1('root'), '*');
+
+-- Tabla de notificaciones del sistema
+CREATE TABLE IF NOT EXISTS notifications (
+  module varchar(24) NOT NULL default '',
+  id varchar(24) NOT NULL default '',
+  date int(11) NOT NULL default '0',
+  title varchar(255) NOT NULL default '',
+  text text NOT NULL,
+  display_mode tinyint(1) NOT NULL default '0',
+  pushed tinyint(1) NOT NULL default '0',
+  cres int(1) NOT NULL default '0',
+  PRIMARY KEY (module, id)
+);
+
+-- Campos requeridos en la tabla notifications para evitar errores de consulta
+ALTER TABLE notifications ADD COLUMN level int(11) NOT NULL default '0' AFTER id;
+ALTER TABLE notifications ADD COLUMN reset tinyint(1) NOT NULL default '0';
+
+-- Tabla de variables globales
+CREATE TABLE IF NOT EXISTS globals (
+  variable varchar(255) NOT NULL default '',
+  value varchar(255) NOT NULL default '',
+  PRIMARY KEY (variable)
+);
+
+-- Tabla de ajustes del PBX
+CREATE TABLE IF NOT EXISTS freepbx_settings (
+  keyword varchar(50) NOT NULL default '',
+  value varchar(255) default NULL,
+  type varchar(25) default NULL,
+  name varchar(50) default NULL,
+  description text,
+  options text,
+  default_val varchar(255) default NULL,
+  readonly tinyint(1) NOT NULL default '0',
+  hidden tinyint(1) NOT NULL default '0',
+  level tinyint(1) NOT NULL default '0',
+  module varchar(50) default NULL,
+  PRIMARY KEY (keyword)
+);
+
+-- Tabla de registro de XML de módulos
+CREATE TABLE IF NOT EXISTS module_xml (
+  id varchar(20) NOT NULL default '',
+  time int(11) NOT NULL default '0',
+  data longblob NOT NULL,
+  PRIMARY KEY (id)
+);
+
+-- Tabla de lista de módulos instalados
+CREATE TABLE IF NOT EXISTS modules (
+  modulename varchar(50) NOT NULL default '',
+  version varchar(20) NOT NULL default '',
+  enabled tinyint(1) NOT NULL default '1',
+  signature blob,
+  PRIMARY KEY (modulename)
+);
+
+-- Tabla para tareas programadas (cron)
+CREATE TABLE IF NOT EXISTS cronmanager (
+  module varchar(24) NOT NULL default '',
+  id varchar(24) NOT NULL default '',
+  time varchar(50) default NULL,
+  class varchar(50) default NULL,
+  PRIMARY KEY (module,id)
+);
+
+-- Tabla de códigos de funciones (Feature Codes)
+CREATE TABLE IF NOT EXISTS featurecodes (
+  modulename varchar(50) NOT NULL default '',
+  featurename varchar(50) NOT NULL default '',
+  description varchar(200) NOT NULL default '',
+  helptext text NOT NULL,
+  defaultcode varchar(20) default NULL,
+  customcode varchar(20) default NULL,
+  enabled tinyint(1) NOT NULL default '0',
+  provided_by varchar(50) NOT NULL default '',
+  PRIMARY KEY (modulename,featurename)
+);
+"
+
+
+===============================================================================
+FASE 3: CONFIGURACIÓN Y ALINEACIÓN DE CREDENCIALES ASTERISK MANAGER (AMI)
+===============================================================================
+
+# Estandarizar parámetros de usuario y clave en amportal.conf
+sed -i "s/^AMPMGRUSER=.*/AMPMGRUSER=admin/" /etc/amportal.conf 2>/dev/null || true
+sed -i "s/^AMPMGRPASS=.*/AMPMGRPASS=amp109/" /etc/amportal.conf 2>/dev/null || true
+sed -i "s/^AMPDBPASS=.*/AMPDBPASS=admin/" /etc/amportal.conf 2>/dev/null || true
+
+# Estandarizar parámetros en issabelpbx.conf
+if [ -f /etc/issabelpbx.conf ]; then
+    sed -i "s/\$amp_conf\['AMPMGRUSER'\] = .*/\$amp_conf\['AMPMGRUSER'\] = 'admin';/" /etc/issabelpbx.conf
+    sed -i "s/\$amp_conf\['AMPMGRPASS'\] = .*/\$amp_conf\['AMPMGRPASS'\] = 'amp109';/" /etc/issabelpbx.conf
+    sed -i "s/\$amp_conf\['AMPDBPASS'\] = .*/\$amp_conf\['AMPDBPASS'\] = 'admin';/" /etc/issabelpbx.conf
+fi
+
+# Configurar el archivo de autenticación del Manager /etc/asterisk/manager.conf
+cat <<EOF > /etc/asterisk/manager.conf
+[general]
+enabled = yes
+port = 5038
+bindaddr = 127.0.0.1
+
+[admin]
+secret = amp109
+deny = 0.0.0.0/0.0.0.0
+permit = 127.0.0.1/255.255.255.255
+read = system,call,log,verbose,command,agent,user,config,dtmf,reporting,cdr,dialplan
+write = system,call,log,verbose,command,agent,user,config,dtmf,reporting,cdr,dialplan
+EOF
+
+
+===============================================================================
+FASE 4: ASIGNACIÓN DE PERMISOS DE ARCHIVOS Y PROPIEDAD DEL SISTEMA
+===============================================================================
+
+chown -R asterisk:asterisk /var/run/asterisk /var/log/asterisk /var/spool/asterisk /var/lib/asterisk /etc/asterisk /var/www/html/ /var/lib/php/session
+chmod -R 775 /var/www/html/admin/ /var/run/asterisk
+chmod 640 /etc/asterisk/manager.conf
+
+
+===============================================================================
+FASE 5: INICIO DE SERVICIOS Y ACTIVACIÓN DEL MÓDULO MANAGER EN ASTERISK
+===============================================================================
+
+# Reiniciar Asterisk para aplicar cambios de manager.conf
+systemctl restart asterisk
+sleep 3
+
+# Forzar la carga en caliente del módulo res_manager.so en Asterisk
+asterisk -rx "module load res_manager.so"
+asterisk -rx "manager reload"
+
+# Verificar que el servicio Manager responda correctamente
+asterisk -rx "manager show settings"
+
+
+===============================================================================
+FASE 6: INSTALACIÓN Y REGISTRO DE MÓDULOS LOCALES DE ISSABELPBX
+===============================================================================
+
+# Recorrer todos los directorios de módulos e instalarlos individualmente en la BD
+for mod in /var/www/html/admin/modules/*; do
+    if [ -d "$mod" ]; then
+        mod_name=$(basename "$mod")
+        /var/lib/asterisk/bin/module_admin install "$mod_name"
+    fi
+done
+
+
+===============================================================================
+FASE 7: COMPILACIÓN DEL DIALPLAN, APLICACIÓN Y REINICIO DEL SERVIDOR WEB
+===============================================================================
+
+# Generar archivos de configuración del dialplan de Asterisk
+/var/lib/asterisk/bin/retrieve_conf
+
+# Sincronizar y recargar módulos en IssabelPBX
+/var/lib/asterisk/bin/module_admin reload
+
+# Corregir permisos en la carpeta de sesiones de PHP para evitar congelamientos web
+chown -R asterisk:asterisk /var/lib/php/session /var/www/html/ 2>/dev/null || true
+
+# Reiniciar el servidor web Apache (httpd)
+systemctl restart httpd
+
+===============================================================================
+                            FIN DEL DOCUMENTO
+===============================================================================
